@@ -1,0 +1,19 @@
+version: '3.8'
+
+services:
+  buscador-negocios:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: buscador-negocios-app
+    ports:
+      - "3080:80"  # Puerto externo:interno
+    environment:
+      - REACT_APP_GOOGLE_PLACES_API_KEY=${REACT_APP_GOOGLE_PLACES_API_KEY}
+    restart: unless-stopped
+    networks:
+      - app-network
+
+networks:
+  app-network:
+    driver: bridge
