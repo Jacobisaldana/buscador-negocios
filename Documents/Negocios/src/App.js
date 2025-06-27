@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
-import { Search, MapPin, Star, Phone, Globe, ExternalLink, Filter, Loader, Download } from 'lucide-react';
+import { Search, MapPin, Star, Phone, Globe, ExternalLink, Filter, Loader, Download, Clock, DollarSign, Tag } from 'lucide-react';
 
-const StarRating = ({ rating }) => {
+const StarRating = ({ rating, reviewCount }) => {
   const stars = [];
   const fullStars = Math.floor(rating);
   const hasHalfStar = rating % 1 >= 0.5;
@@ -26,14 +26,53 @@ const StarRating = ({ rating }) => {
   return (
     <div className="flex items-center gap-1">
       <div className="flex">{stars}</div>
-      <span className="text-sm text-gray-600 ml-1">({rating.toFixed(1)})</span>
+      <div className="ml-1 text-sm text-gray-600">
+        <span>({rating.toFixed(1)})</span>
+        {reviewCount > 0 && (
+          <span className="ml-1 text-xs text-gray-500">
+            {reviewCount} reseña{reviewCount !== 1 ? 's' : ''}
+          </span>
+        )}
+      </div>
+    </div>
+  );
+};
+
+const PriceLevel = ({ level }) => {
+  if (!level) return null;
+  
+  const dollars = [];
+  for (let i = 0; i < 4; i++) {
+    dollars.push(
+      <DollarSign 
+        key={i} 
+        className={`w-3 h-3 ${i < level ? 'text-green-600' : 'text-gray-300'}`}
+      />
+    );
+  }
+  
+  return (
+    <div className="flex items-center" title={`Nivel de precios: ${level}/4`}>
+      {dollars}
+    </div>
+  );
+};
+
+const OpenStatus = ({ isOpen }) => {
+  if (isOpen === null) return null;
+  
+  return (
+    <div className={`flex items-center gap-1 text-xs ${isOpen ? 'text-green-600' : 'text-red-600'}`}>
+      <Clock className="w-3 h-3" />
+      <span>{isOpen ? 'Abierto' : 'Cerrado'}</span>
     </div>
   );
 };
 
 function App() {
   const [keyword, setKeyword] = useState('');
-  const [zipCode, setZipCode] = useState('');
+  const [location, setLocation] = useState('');
+  const [locationType, setLocationType] = useState('zipcode');
   const [businesses, setBusinesses] = useState([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
@@ -43,7 +82,7 @@ function App() {
 
   const apiKey = process.env.REACT_APP_GOOGLE_PLACES_API_KEY;
 
-  const geocodeZipCode = async (zipCode) => {
+  const geocodeLocation = async (locationInput, type) => {
     return new Promise((resolve, reject) => {
       if (!window.google) {
         reject(new Error('Google Maps no está cargado. Verifica tu API Key.'));
@@ -51,26 +90,68 @@ function App() {
       }
 
       const geocoder = new window.google.maps.Geocoder();
-      const queries = [
-        zipCode,
-        `${zipCode}, España`,
-        `${zipCode}, Spain`,
-        `CP ${zipCode}, España`
-      ];
+      let queries = [];
+
+      switch (type) {
+        case 'zipcode':
+          queries = [
+            locationInput,
+            `${locationInput}, España`,
+            `${locationInput}, Spain`,
+            `CP ${locationInput}, España`,
+            `${locationInput}, México`,
+            `${locationInput}, USA`
+          ];
+          break;
+        case 'address':
+          queries = [
+            locationInput,
+            `${locationInput}, España`,
+            `${locationInput}, Spain`
+          ];
+          break;
+        case 'city':
+          queries = [
+            `${locationInput}, España`,
+            `${locationInput}, Spain`,
+            `${locationInput}, México`,
+            `${locationInput}, USA`,
+            locationInput
+          ];
+          break;
+        case 'state':
+          queries = [
+            `${locationInput}, España`,
+            `${locationInput}, Spain`,
+            `${locationInput}, México`,
+            `${locationInput}, USA`,
+            locationInput
+          ];
+          break;
+        case 'country':
+          queries = [locationInput];
+          break;
+        default:
+          queries = [locationInput];
+      }
 
       const tryGeocode = (index = 0) => {
         if (index >= queries.length) {
-          reject(new Error('No se pudo encontrar la ubicación del código postal. Verifica que sea un código postal válido.'));
+          reject(new Error(`No se pudo encontrar la ubicación "${locationInput}". Verifica que sea una ubicación válida.`));
           return;
         }
 
         geocoder.geocode({ address: queries[index] }, (results, status) => {
           if (status === 'OK' && results.length > 0) {
             const location = results[0].geometry.location;
-            resolve({
+            const result = {
               lat: location.lat(),
-              lng: location.lng()
-            });
+              lng: location.lng(),
+              formatted_address: results[0].formatted_address,
+              place_id: results[0].place_id
+            };
+            console.log(`Ubicación geocodificada: ${queries[index]} -> ${result.formatted_address}`);
+            resolve(result);
           } else {
             tryGeocode(index + 1);
           }
@@ -81,7 +162,7 @@ function App() {
     });
   };
 
-  const searchPlaces = async (keyword, location) => {
+  const searchPlaces = async (keyword, locationData, locationType) => {
     return new Promise((resolve, reject) => {
       if (!window.google) {
         reject(new Error('Google Maps no está cargado. Verifica tu API Key.'));
@@ -89,10 +170,31 @@ function App() {
       }
 
       const service = new window.google.maps.places.PlacesService(document.createElement('div'));
+      
+      // Ajustar radio según el tipo de ubicación
+      let radius;
+      switch (locationType) {
+        case 'zipcode':
+        case 'address':
+          radius = 10000; // 10km para código postal o dirección específica
+          break;
+        case 'city':
+          radius = 25000; // 25km para ciudad
+          break;
+        case 'state':
+          radius = 100000; // 100km para estado/provincia
+          break;
+        case 'country':
+          radius = 200000; // 200km para país (máximo permitido)
+          break;
+        default:
+          radius = 10000;
+      }
+
       const request = {
         query: keyword,
-        location: new window.google.maps.LatLng(location.lat, location.lng),
-        radius: 10000
+        location: new window.google.maps.LatLng(locationData.lat, locationData.lng),
+        radius: radius
       };
 
       service.textSearch(request, (results, status) => {
@@ -102,14 +204,14 @@ function App() {
           // Procesar cada lugar para obtener detalles adicionales
           let processedCount = 0;
           const businesses = [];
-          const totalPlaces = Math.min(results.length, 20);
+          const totalPlaces = Math.min(results.length, 50);
           
           if (totalPlaces === 0) {
             resolve([]);
             return;
           }
           
-          results.slice(0, 20).forEach((place, index) => {
+          results.slice(0, 50).forEach((place, index) => {
             // Obtener detalles adicionales para cada lugar
             const detailsRequest = {
               placeId: place.place_id,
@@ -119,7 +221,12 @@ function App() {
                 'website', 
                 'url',
                 'name',
-                'formatted_address'
+                'formatted_address',
+                'user_ratings_total',
+                'rating',
+                'opening_hours',
+                'price_level',
+                'types'
               ]
             };
             
@@ -133,7 +240,11 @@ function App() {
                   address: placeDetails.formatted_address || place.formatted_address,
                   website: placeDetails.website || '',
                   phone: placeDetails.formatted_phone_number || placeDetails.international_phone_number || '',
-                  rating: place.rating || 0,
+                  rating: placeDetails.rating || place.rating || 0,
+                  reviewCount: placeDetails.user_ratings_total || 0,
+                  priceLevel: placeDetails.price_level || null,
+                  isOpen: placeDetails.opening_hours?.open_now || null,
+                  types: placeDetails.types || place.types || [],
                   mapsUrl: placeDetails.url || `https://www.google.com/maps/place/?q=place_id:${place.place_id}`
                 };
                 console.log(`Detalles obtenidos para ${business.name}:`, {
@@ -150,6 +261,10 @@ function App() {
                   website: '',
                   phone: '',
                   rating: place.rating || 0,
+                  reviewCount: place.user_ratings_total || 0,
+                  priceLevel: place.price_level || null,
+                  isOpen: null,
+                  types: place.types || [],
                   mapsUrl: `https://www.google.com/maps/place/?q=place_id:${place.place_id}`
                 };
                 console.log(`Falló obtener detalles para ${business.name}, usando datos básicos`);
@@ -176,8 +291,8 @@ function App() {
   const handleSearch = async (e) => {
     e.preventDefault();
     
-    if (!keyword.trim() || !zipCode.trim()) {
-      setError('Por favor ingresa tanto la palabra clave como el código postal');
+    if (!keyword.trim() || !location.trim()) {
+      setError('Por favor ingresa tanto la palabra clave como la ubicación');
       return;
     }
     
@@ -196,14 +311,14 @@ function App() {
     setBusinesses([]);
     
     try {
-      console.log('Geocodificando código postal:', zipCode.trim());
-      const location = await geocodeZipCode(zipCode.trim());
-      console.log('Ubicación encontrada:', location);
+      console.log(`Geocodificando ${locationType}:`, location.trim());
+      const locationData = await geocodeLocation(location.trim(), locationType);
+      console.log('Ubicación encontrada:', locationData);
       
-      console.log('Buscando lugares para:', keyword.trim());
-      const results = await searchPlaces(keyword.trim(), location);
+      console.log(`Buscando lugares para "${keyword.trim()}" en radio de ${getRadiusText(locationType)}`);
+      const results = await searchPlaces(keyword.trim(), locationData, locationType);
       console.log('Resultados encontrados:', results.length);
-      console.log('Muestra de resultados con teléfonos y webs:', results.slice(0, 3));
+      console.log('Muestra de resultados:', results.slice(0, 3));
       
       setBusinesses(results);
     } catch (err) {
@@ -211,6 +326,73 @@ function App() {
       setError(err.message);
     } finally {
       setLoading(false);
+    }
+  };
+
+  const getRadiusText = (type) => {
+    switch (type) {
+      case 'zipcode':
+      case 'address':
+        return '10km';
+      case 'city':
+        return '25km';
+      case 'state':
+        return '100km';
+      case 'country':
+        return '200km';
+      default:
+        return '10km';
+    }
+  };
+
+  const getLocationPlaceholder = (type) => {
+    switch (type) {
+      case 'zipcode':
+        return 'Ej: 28001, 08001, 46001...';
+      case 'address':
+        return 'Ej: Calle Gran Vía 123, Madrid';
+      case 'city':
+        return 'Ej: Madrid, Barcelona, Valencia...';
+      case 'state':
+        return 'Ej: Comunidad de Madrid, Cataluña...';
+      case 'country':
+        return 'Ej: España, México, Estados Unidos...';
+      default:
+        return 'Ingresa una ubicación...';
+    }
+  };
+
+  const getLocationTypeLabel = (type) => {
+    switch (type) {
+      case 'zipcode':
+        return 'Código Postal';
+      case 'address':
+        return 'Dirección Específica';
+      case 'city':
+        return 'Ciudad';
+      case 'state':
+        return 'Estado/Provincia';
+      case 'country':
+        return 'País';
+      default:
+        return 'Ubicación';
+    }
+  };
+
+  const getLocationDescription = (type) => {
+    switch (type) {
+      case 'zipcode':
+        return 'Búsqueda precisa en un área específica de código postal';
+      case 'address':
+        return 'Búsqueda en los alrededores de una dirección específica';
+      case 'city':
+        return 'Búsqueda amplia en toda una ciudad y sus alrededores';
+      case 'state':
+        return 'Búsqueda muy amplia en toda una provincia o estado';
+      case 'country':
+        return 'Búsqueda máxima en un área extensa del país';
+      default:
+        return '';
     }
   };
 
@@ -231,7 +413,7 @@ function App() {
   const exportToCSV = () => {
     const csvContent = [
       // Header
-      ['Nombre', 'Dirección', 'Teléfono', 'Sitio Web', 'Calificación', 'Google Maps URL'],
+      ['Nombre', 'Dirección', 'Teléfono', 'Sitio Web', 'Calificación', 'Número de Reseñas', 'Nivel de Precios', 'Estado (Abierto/Cerrado)', 'Tipos', 'Google Maps URL'],
       // Data rows
       ...filteredBusinesses.map(business => [
         business.name,
@@ -239,6 +421,10 @@ function App() {
         business.phone || 'No disponible',
         business.website || 'No disponible',
         business.rating || 'Sin calificación',
+        business.reviewCount || 0,
+        business.priceLevel ? `${business.priceLevel}/4` : 'No disponible',
+        business.isOpen === null ? 'No disponible' : (business.isOpen ? 'Abierto' : 'Cerrado'),
+        business.types ? business.types.slice(0, 3).join(', ') : 'No disponible',
         business.mapsUrl
       ])
     ];
@@ -275,7 +461,7 @@ function App() {
           <div className="flex items-center gap-2">
             <div className="w-2 h-2 bg-green-500 rounded-full"></div>
             <p className="text-green-800 text-sm">
-              <strong>API Real:</strong> Usando Google Places API. Busca cualquier negocio con códigos postales reales.
+              <strong>API Real:</strong> Búsqueda flexible por código postal, dirección, ciudad, estado o país. Hasta 50 resultados con información completa.
             </p>
           </div>
         </div>
@@ -283,7 +469,7 @@ function App() {
         {/* Search Form */}
         <div className="bg-white rounded-lg shadow-sm border p-6 mb-6">
           <form onSubmit={handleSearch} className="space-y-4">
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
               <div className="relative">
                 <label htmlFor="keyword" className="block text-sm font-medium text-gray-700 mb-2">
                   Palabra clave
@@ -302,19 +488,51 @@ function App() {
               </div>
               
               <div className="relative">
-                <label htmlFor="zipcode" className="block text-sm font-medium text-gray-700 mb-2">
-                  Código postal
+                <label htmlFor="location-type" className="block text-sm font-medium text-gray-700 mb-2">
+                  Tipo de ubicación
+                </label>
+                <select
+                  id="location-type"
+                  value={locationType}
+                  onChange={(e) => setLocationType(e.target.value)}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                >
+                  <option value="zipcode">Código Postal</option>
+                  <option value="address">Dirección Específica</option>
+                  <option value="city">Ciudad</option>
+                  <option value="state">Estado/Provincia</option>
+                  <option value="country">País</option>
+                </select>
+              </div>
+              
+              <div className="relative">
+                <label htmlFor="location" className="flex items-center text-sm font-medium text-gray-700 mb-2">
+                  Ubicación
+                  <span className="ml-1 text-xs text-gray-500">
+                    (Radio: {getRadiusText(locationType)})
+                  </span>
                 </label>
                 <div className="relative">
                   <MapPin className="absolute left-3 top-1/2 transform -translate-y-1/2 w-4 h-4 text-gray-400" />
                   <input
-                    id="zipcode"
+                    id="location"
                     type="text"
-                    value={zipCode}
-                    onChange={(e) => setZipCode(e.target.value)}
-                    placeholder="Ej: 28001, 08001..."
+                    value={location}
+                    onChange={(e) => setLocation(e.target.value)}
+                    placeholder={getLocationPlaceholder(locationType)}
                     className="pl-10 w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                   />
+                </div>
+              </div>
+            </div>
+            
+            {/* Search Type Info */}
+            <div className="bg-blue-50 border border-blue-200 rounded-lg p-3">
+              <div className="text-xs text-blue-800">
+                <strong>Tipo seleccionado: {getLocationTypeLabel(locationType)}</strong>
+                <span className="ml-2">Radio de búsqueda: {getRadiusText(locationType)}</span>
+                <div className="mt-1 text-blue-600">
+                  {getLocationDescription(locationType)}
                 </div>
               </div>
             </div>
@@ -428,6 +646,9 @@ function App() {
                       Calificación
                     </th>
                     <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                      Info Adicional
+                    </th>
+                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                       Google Maps
                     </th>
                   </tr>
@@ -469,10 +690,24 @@ function App() {
                       </td>
                       <td className="px-6 py-4 whitespace-nowrap">
                         {business.rating > 0 ? (
-                          <StarRating rating={business.rating} />
+                          <StarRating rating={business.rating} reviewCount={business.reviewCount} />
                         ) : (
                           <span className="text-sm text-gray-500">Sin calificación</span>
                         )}
+                      </td>
+                      <td className="px-6 py-4 whitespace-nowrap">
+                        <div className="space-y-1">
+                          <PriceLevel level={business.priceLevel} />
+                          <OpenStatus isOpen={business.isOpen} />
+                          {business.types && business.types.length > 0 && (
+                            <div className="flex items-center gap-1">
+                              <Tag className="w-3 h-3 text-gray-400" />
+                              <span className="text-xs text-gray-500 truncate max-w-20" title={business.types.slice(0, 3).join(', ')}>
+                                {business.types[0]?.replace(/_/g, ' ')}
+                              </span>
+                            </div>
+                          )}
+                        </div>
                       </td>
                       <td className="px-6 py-4 whitespace-nowrap">
                         <a
@@ -501,9 +736,17 @@ function App() {
                     <p className="text-sm text-gray-600 mt-1">{business.address}</p>
                   </div>
                   
-                  {business.rating > 0 && (
-                    <StarRating rating={business.rating} />
-                  )}
+                  <div className="flex items-center justify-between">
+                    {business.rating > 0 ? (
+                      <StarRating rating={business.rating} reviewCount={business.reviewCount} />
+                    ) : (
+                      <span className="text-sm text-gray-500">Sin calificación</span>
+                    )}
+                    <div className="flex items-center gap-2">
+                      <PriceLevel level={business.priceLevel} />
+                      <OpenStatus isOpen={business.isOpen} />
+                    </div>
+                  </div>
                   
                   <div className="grid grid-cols-1 gap-2">
                     {business.phone ? (
@@ -549,6 +792,15 @@ function App() {
                         <ExternalLink className="w-3 h-3" />
                       </a>
                     </div>
+                    
+                    {business.types && business.types.length > 0 && (
+                      <div className="flex items-center gap-2">
+                        <Tag className="w-4 h-4 text-gray-400" />
+                        <span className="text-sm text-gray-500">
+                          {business.types.slice(0, 2).map(type => type.replace(/_/g, ' ')).join(', ')}
+                        </span>
+                      </div>
+                    )}
                   </div>
                 </div>
               ))}
